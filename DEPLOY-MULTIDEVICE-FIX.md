@@ -267,14 +267,6 @@ cd ~/evolution-clean
 docker-compose up -d
 ```
 
----
-
-## 📅 Data da Alteração
-**04 de Dezembro de 2025**
-
-## 👤 Autor
-Alteração realizada com auxílio de IA (Claude/Cursor)
-
 ## 🔗 Links
 - Fork: https://github.com/joinads/evolution-api
 - Original: https://github.com/EvolutionAPI/evolution-api
