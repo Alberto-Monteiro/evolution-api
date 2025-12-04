@@ -1,0 +1,120 @@
+version: "3.8"
+
+services:
+  api:
+    container_name: evolution_api_local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "8080:8080"
+    volumes:
+      - evolution_instances:/evolution/instances
+    networks:
+      - evolution-local
+    environment:
+      # Servidor
+      - SERVER_NAME=evolution
+      - SERVER_TYPE=http
+      - SERVER_PORT=8080
+      - SERVER_URL=http://localhost:8080
+      - SERVER_DISABLE_DOCS=false
+      - SERVER_DISABLE_MANAGER=false
+      
+      # Banco de dados
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://evolution:evolution123@postgres:5432/evolution
+      - DATABASE_CONNECTION_CLIENT_NAME=evolution
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=true
+      - DATABASE_SAVE_MESSAGE_UPDATE=true
+      - DATABASE_SAVE_DATA_CONTACTS=true
+      - DATABASE_SAVE_DATA_CHATS=true
+      - DATABASE_SAVE_DATA_HISTORIC=true
+      - DATABASE_SAVE_DATA_LABELS=true
+      - DATABASE_SAVE_IS_ON_WHATSAPP=true
+      - DATABASE_SAVE_IS_ON_WHATSAPP_DAYS=7
+      
+      # Redis
+      - CACHE_REDIS_ENABLED=true
+      - CACHE_REDIS_URI=redis://redis:6379
+      - CACHE_REDIS_PREFIX_KEY=evolution-cache
+      - CACHE_REDIS_TTL=604800
+      - CACHE_REDIS_SAVE_INSTANCES=true
+      - CACHE_LOCAL_ENABLED=true
+      
+      # Autenticação
+      - AUTHENTICATION_API_KEY=sua-api-key-aqui
+      - AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=false
+      
+      # Logs
+      - LOG_LEVEL=ERROR,WARN,DEBUG,INFO,LOG,VERBOSE,WEBHOOKS,WEBSOCKET
+      - LOG_COLOR=true
+      - LOG_BAILEYS=error
+      
+      # Instâncias
+      - DEL_INSTANCE=false
+      - DEL_TEMP_INSTANCES=true
+      
+      # Idioma
+      - LANGUAGE=pt-BR
+      
+      # WebSocket
+      - WEBSOCKET_ENABLED=true
+      - WEBSOCKET_GLOBAL_EVENTS=true
+      
+      # QR Code
+      - QRCODE_LIMIT=30
+      - QRCODE_COLOR=#198754
+      
+      # Telemetria
+      - TELEMETRY_ENABLED=false
+
+  postgres:
+    container_name: evolution_postgres_local
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=evolution
+      - POSTGRES_USER=evolution
+      - POSTGRES_PASSWORD=evolution123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - evolution-local
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    container_name: evolution_redis_local
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - evolution-local
+    ports:
+      - "6379:6379"
+
+volumes:
+  evolution_instances:
+  postgres_data:
+  redis_data:
+
+networks:
+  evolution-local:
+    name: evolution-local
+    driver: bridge
+
