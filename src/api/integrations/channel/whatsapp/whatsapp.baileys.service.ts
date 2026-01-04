@@ -2249,8 +2249,8 @@ export class BaileysStartupService extends ChannelStartupService {
           thumbnailUrl: image,
           sourceUrl: url,
           mediaUrl: url,
-          renderLargerThumbnail: true,
-          showAdAttribution: true
+          renderLargerThumbnail: true
+          // showAdAttribution: true // Removed to prevent "Sent via ad" label
         }
       };
     } catch (error) {
