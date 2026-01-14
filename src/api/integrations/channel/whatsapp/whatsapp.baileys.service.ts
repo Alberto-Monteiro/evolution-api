@@ -2248,7 +2248,7 @@ export class BaileysStartupService extends ChannelStartupService {
           mentions,
           linkPreview,
           quoted,
-          options.messageId,
+          optionsoptions?.messageId ?? null,
           group?.ephemeralDuration,
           // group?.participants,
         );
@@ -2270,7 +2270,7 @@ export class BaileysStartupService extends ChannelStartupService {
           mentions,
           linkPreview,
           quoted,
-          options.messageId,
+          options?.messageId ?? null,
           undefined,
           contextInfo,
         );
