@@ -640,7 +640,7 @@ export class BaileysStartupService extends ChannelStartupService {
     }
 
     // Fetch latest WhatsApp Web version automatically
-    const baileysVersion = await fetchLatestWaWebVersion({});
+    const baileysVersion = await fetchLatestWaWebVersion({}, this.cache);
     const version = baileysVersion.version;
 
     const log = `Baileys version: ${version.join('.')}`;
