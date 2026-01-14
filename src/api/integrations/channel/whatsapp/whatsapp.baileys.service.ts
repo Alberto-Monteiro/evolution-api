@@ -103,6 +103,7 @@ import makeWASocket, {
   DisconnectReason,
   downloadContentFromMessage,
   downloadMediaMessage,
+  generateMessageIDV2,
   generateWAMessageFromContent,
   getAggregateVotesInPollMessage,
   GetCatalogOptions,
@@ -128,7 +129,6 @@ import makeWASocket, {
   WAMessageKey,
   WAPresence,
   WASocket,
-  generateMessageIDV2
 } from 'baileys';
 import { Label } from 'baileys/lib/Types/Label';
 import { LabelAssociation } from 'baileys/lib/Types/LabelAssociation';
@@ -1981,9 +1981,8 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   private async generateMessageID() {
-
     return {
-      id: generateMessageIDV2(this.client.user?.id)
+      id: generateMessageIDV2(this.client.user?.id),
     };
   }
 
