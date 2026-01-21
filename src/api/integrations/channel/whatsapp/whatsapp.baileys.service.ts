@@ -1028,7 +1028,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
           if (!remoteJid) {
             remoteJid = chat.id;
-          }
+        }
 
           chatsRaw.push({ remoteJid, remoteLid, instanceId: this.instanceId, name: chat.name });
         }
@@ -1036,13 +1036,13 @@ export class BaileysStartupService extends ChannelStartupService {
         this.sendDataWebhook(Events.CHATS_SET, chatsRaw);
 
         if (this.configService.get<Database>('DATABASE').SAVE_DATA.HISTORIC) {
-          chatsRaw = chatsRaw.map((chat) => {
+
+          const chatsToCreateMany = JSON.parse(JSON.stringify(chatsRaw)).map((chat) => {
             delete chat.remoteLid;
-
             return chat;
-          });
+          })
 
-          await this.prismaRepository.chat.createMany({ data: chatsRaw, skipDuplicates: true });
+          await this.prismaRepository.chat.createMany({ data: chatsToCreateMany, skipDuplicates: true });
         }
 
         const messagesRaw: any[] = [];
@@ -1525,8 +1525,15 @@ export class BaileysStartupService extends ChannelStartupService {
           this.logger.verbose(messageRaw);
 
           sendTelemetry(`received.message.${messageRaw.messageType ?? 'unknown'}`);
+
           if (messageRaw.key.remoteJid?.includes('@lid') && messageRaw.key.remoteJidAlt) {
+
+            const lid = messageRaw.key.remoteJid
+
             messageRaw.key.remoteJid = messageRaw.key.remoteJidAlt;
+            messageRaw.key.remoteJidAlt = lid
+
+            messageRaw.key.addressingMode = 'pn'
           }
           console.log(messageRaw);
 
