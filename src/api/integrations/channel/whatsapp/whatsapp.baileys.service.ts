@@ -997,7 +997,7 @@ export class BaileysStartupService extends ChannelStartupService {
           contactsMapLidJid.set(contact.id, { jid });
         }
 
-        let chatsRaw: { remoteJid: string; remoteLid: string; instanceId: string; name?: string }[] = [];
+        const chatsRaw: { remoteJid: string; remoteLid: string; instanceId: string; name?: string }[] = [];
         const chatsRepository = new Set(
           (await this.prismaRepository.chat.findMany({ where: { instanceId: this.instanceId } })).map(
             (chat) => chat.remoteJid,
@@ -1028,7 +1028,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
           if (!remoteJid) {
             remoteJid = chat.id;
-        }
+          }
 
           chatsRaw.push({ remoteJid, remoteLid, instanceId: this.instanceId, name: chat.name });
         }
@@ -1036,11 +1036,10 @@ export class BaileysStartupService extends ChannelStartupService {
         this.sendDataWebhook(Events.CHATS_SET, chatsRaw);
 
         if (this.configService.get<Database>('DATABASE').SAVE_DATA.HISTORIC) {
-
           const chatsToCreateMany = JSON.parse(JSON.stringify(chatsRaw)).map((chat) => {
             delete chat.remoteLid;
             return chat;
-          })
+          });
 
           await this.prismaRepository.chat.createMany({ data: chatsToCreateMany, skipDuplicates: true });
         }
@@ -1527,13 +1526,12 @@ export class BaileysStartupService extends ChannelStartupService {
           sendTelemetry(`received.message.${messageRaw.messageType ?? 'unknown'}`);
 
           if (messageRaw.key.remoteJid?.includes('@lid') && messageRaw.key.remoteJidAlt) {
-
-            const lid = messageRaw.key.remoteJid
+            const lid = messageRaw.key.remoteJid;
 
             messageRaw.key.remoteJid = messageRaw.key.remoteJidAlt;
-            messageRaw.key.remoteJidAlt = lid
+            messageRaw.key.remoteJidAlt = lid;
 
-            messageRaw.key.addressingMode = 'pn'
+            messageRaw.key.addressingMode = 'pn';
           }
           console.log(messageRaw);
 
