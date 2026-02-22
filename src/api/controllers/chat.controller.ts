@@ -3,6 +3,7 @@ import {
   BlockUserDto,
   DecryptPollVoteDto,
   DeleteMessage,
+  FetchChannelsByBaileysDto,
   getBase64FromMediaMessageDto,
   MarkChatUnreadDto,
   NumberDto,
@@ -125,5 +126,9 @@ export class ChatController {
 
   public async fetchChannels({ instanceName }: InstanceDto, query: Query<Contact>) {
     return await this.waMonitor.waInstances[instanceName].fetchChannels(query);
+  }
+
+  public async fetchChannelsByBaileys({ instanceName }: InstanceDto, data: FetchChannelsByBaileysDto) {
+    return await this.waMonitor.waInstances[instanceName].fetchChannelsByBaileys(data);
   }
 }

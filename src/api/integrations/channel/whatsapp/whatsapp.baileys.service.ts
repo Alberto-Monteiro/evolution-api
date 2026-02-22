@@ -4,6 +4,7 @@ import {
   ArchiveChatDto,
   BlockUserDto,
   DeleteMessage,
+  FetchChannelsByBaileysDto,
   getBase64FromMediaMessageDto,
   LastMessage,
   MarkChatUnreadDto,
@@ -700,9 +701,9 @@ export class BaileysStartupService extends ChannelStartupService {
 
         const isGroupJid = this.localSettings.groupsIgnore && isJidGroup(jid);
         const isBroadcast = !this.localSettings.readStatus && isJidBroadcast(jid);
-        const isNewsletter = isJidNewsletter(jid);
 
-        return isGroupJid || isBroadcast || isNewsletter;
+        // Keep newsletters in sync pipeline so channel metadata can be indexed/listed.
+        return isGroupJid || isBroadcast;
       },
       syncFullHistory: this.localSettings.syncFullHistory,
       shouldSyncHistoryMessage: (msg: proto.Message.IHistorySyncNotification) => {
@@ -5469,39 +5470,109 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   public async fetchChannels(query: Query<Contact>) {
-    const page = Number((query as any)?.page ?? 1);
-    const limit = Number((query as any)?.limit ?? (query as any)?.rows ?? 50);
+    const page = Math.max(1, Number((query as any)?.page ?? 1));
+    const requestedLimit = Number((query as any)?.limit ?? (query as any)?.rows ?? (query as any)?.offset ?? 50);
+    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : 50;
     const skip = (page - 1) * limit;
 
-    const messages = await this.prismaRepository.message.findMany({
-      where: {
-        instanceId: this.instanceId,
-        AND: [{ key: { path: ['remoteJid'], not: null } }],
-      },
-      orderBy: { messageTimestamp: 'desc' },
-      select: {
-        key: true,
-        messageTimestamp: true,
-      },
-    });
+    const [messages, chats, contacts] = await Promise.all([
+      this.prismaRepository.message.findMany({
+        where: {
+          instanceId: this.instanceId,
+          AND: [{ key: { path: ['remoteJid'], not: null } }],
+        },
+        orderBy: { messageTimestamp: 'desc' },
+        select: {
+          key: true,
+          pushName: true,
+          messageTimestamp: true,
+        },
+      }),
+      this.prismaRepository.chat.findMany({
+        where: {
+          instanceId: this.instanceId,
+        },
+        select: {
+          remoteJid: true,
+          name: true,
+          updatedAt: true,
+          createdAt: true,
+        },
+      }),
+      this.prismaRepository.contact.findMany({
+        where: {
+          instanceId: this.instanceId,
+        },
+        select: {
+          remoteJid: true,
+          pushName: true,
+          updatedAt: true,
+          createdAt: true,
+        },
+      }),
+    ]);
 
-    const channelMap = new Map<string, { remoteJid: string; pushName: undefined; lastMessageTimestamp: number }>();
+    const channelMap = new Map<string, { remoteJid: string; pushName?: string; lastMessageTimestamp: number }>();
+
+    const toUnix = (date?: Date | null): number => {
+      if (!date) return 0;
+      return Math.floor(date.getTime() / 1000);
+    };
+
+    const upsertChannel = (remoteJid?: string | null, pushName?: string | null, timestamp?: number) => {
+      if (!remoteJid || !isJidNewsletter(remoteJid)) return;
+
+      const existing = channelMap.get(remoteJid);
+      if (!existing) {
+        channelMap.set(remoteJid, {
+          remoteJid,
+          pushName: pushName || undefined,
+          lastMessageTimestamp: timestamp ?? 0,
+        });
+        return;
+      }
+
+      if (!existing.pushName && pushName) {
+        existing.pushName = pushName;
+      }
+
+      if ((timestamp ?? 0) > existing.lastMessageTimestamp) {
+        existing.lastMessageTimestamp = timestamp ?? 0;
+      }
+    };
 
     for (const msg of messages) {
       const key = msg.key as any;
-      const remoteJid = key?.remoteJid as string | undefined;
-      if (!remoteJid || !isJidNewsletter(remoteJid)) continue;
-
-      if (!channelMap.has(remoteJid)) {
-        channelMap.set(remoteJid, {
-          remoteJid,
-          pushName: undefined, // Push name is never stored for channels, so we set it as undefined
-          lastMessageTimestamp: msg.messageTimestamp,
-        });
-      }
+      upsertChannel(key?.remoteJid, msg.pushName, msg.messageTimestamp);
     }
 
-    const allChannels = Array.from(channelMap.values());
+    for (const chat of chats) {
+      upsertChannel(chat.remoteJid, chat.name, toUnix(chat.updatedAt) || toUnix(chat.createdAt));
+    }
+
+    for (const contact of contacts) {
+      upsertChannel(contact.remoteJid, contact.pushName, toUnix(contact.updatedAt) || toUnix(contact.createdAt));
+    }
+
+    const remoteJidFilter = (query as any)?.where?.remoteJid as string | undefined;
+    let allChannels = Array.from(channelMap.values());
+
+    if (remoteJidFilter) {
+      const normalizedFilter = remoteJidFilter.includes('@') ? remoteJidFilter : `${remoteJidFilter}@newsletter`;
+      allChannels = allChannels.filter(
+        (channel) =>
+          channel.remoteJid === normalizedFilter ||
+          channel.remoteJid.includes(remoteJidFilter) ||
+          (channel.pushName ?? '').toLowerCase().includes(remoteJidFilter.toLowerCase()),
+      );
+    }
+
+    allChannels.sort((a, b) => {
+      if (b.lastMessageTimestamp !== a.lastMessageTimestamp) {
+        return b.lastMessageTimestamp - a.lastMessageTimestamp;
+      }
+      return (a.pushName ?? a.remoteJid).localeCompare(b.pushName ?? b.remoteJid);
+    });
 
     const total = allChannels.length;
     const pages = Math.ceil(total / limit);
@@ -5514,5 +5585,183 @@ export class BaileysStartupService extends ChannelStartupService {
       limit,
       records,
     };
+  }
+
+  public async fetchChannelsByBaileys(data: FetchChannelsByBaileysDto = {}) {
+    const page = Math.max(1, Number(data?.page ?? 1));
+    const requestedLimit = Number(data?.limit ?? 50);
+    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : 50;
+    const includeSubscribers = data?.includeSubscribers !== false;
+    const skip = (page - 1) * limit;
+
+    const knownChannelsResponse = await this.fetchChannels({
+      page: 1,
+      limit: 5000,
+      where: data?.where as any,
+    } as Query<Contact>);
+
+    const knownChannels = Array.isArray(knownChannelsResponse?.records) ? knownChannelsResponse.records : [];
+    const channelMap = new Map<string, { remoteJid: string; pushName?: string; lastMessageTimestamp: number }>();
+
+    knownChannels.forEach((channel: any) => {
+      const remoteJid = this.normalizeNewsletterJid(channel?.remoteJid);
+      if (!remoteJid) return;
+
+      const existing = channelMap.get(remoteJid);
+      const timestamp = Number(channel?.lastMessageTimestamp ?? 0) || 0;
+      const pushName = (channel?.pushName as string | undefined) ?? undefined;
+
+      if (!existing) {
+        channelMap.set(remoteJid, { remoteJid, pushName, lastMessageTimestamp: timestamp });
+        return;
+      }
+
+      if (!existing.pushName && pushName) {
+        existing.pushName = pushName;
+      }
+
+      if (timestamp > existing.lastMessageTimestamp) {
+        existing.lastMessageTimestamp = timestamp;
+      }
+    });
+
+    (data?.channelJids ?? []).forEach((channelJid) => {
+      const remoteJid = this.normalizeNewsletterJid(channelJid);
+      if (!remoteJid || channelMap.has(remoteJid)) {
+        return;
+      }
+
+      channelMap.set(remoteJid, { remoteJid, lastMessageTimestamp: 0 });
+    });
+
+    const allChannels = Array.from(channelMap.values()).sort((a, b) => {
+      if (b.lastMessageTimestamp !== a.lastMessageTimestamp) {
+        return b.lastMessageTimestamp - a.lastMessageTimestamp;
+      }
+
+      return (a.pushName ?? a.remoteJid).localeCompare(b.pushName ?? b.remoteJid);
+    });
+
+    const total = allChannels.length;
+    const pages = Math.ceil(total / limit);
+    const paginatedChannels = allChannels.slice(skip, skip + limit);
+
+    const records = await Promise.all(
+      paginatedChannels.map((channel) => this.fetchChannelDetailsByBaileys(channel, includeSubscribers)),
+    );
+
+    return {
+      total,
+      pages,
+      currentPage: page,
+      limit,
+      records,
+    };
+  }
+
+  private async fetchChannelDetailsByBaileys(
+    channel: { remoteJid: string; pushName?: string; lastMessageTimestamp: number },
+    includeSubscribers: boolean,
+  ) {
+    try {
+      const metadata = await this.client.newsletterMetadata('jid', channel.remoteJid);
+      const subscribersPayload = includeSubscribers
+        ? await this.client.newsletterSubscribers(channel.remoteJid).catch(() => null)
+        : null;
+
+      const threadMetadata = (metadata as any)?.thread_metadata ?? {};
+      const viewerMetadata = (metadata as any)?.viewer_metadata ?? {};
+      const inviteCode = (metadata as any)?.invite ?? threadMetadata?.invite ?? null;
+      const subscribers = this.extractChannelSubscribers(metadata, subscribersPayload);
+      const creationTime = this.normalizeChannelCreationTime(
+        (metadata as any)?.creation_time ?? threadMetadata?.creation_time,
+      );
+
+      return {
+        id: (metadata as any)?.id ?? channel.remoteJid,
+        remoteJid: channel.remoteJid,
+        name:
+          (metadata as any)?.name ??
+          threadMetadata?.name?.text ??
+          threadMetadata?.name ??
+          channel.pushName ??
+          channel.remoteJid,
+        description:
+          (metadata as any)?.description ?? threadMetadata?.description?.text ?? threadMetadata?.description ?? null,
+        participants: subscribers,
+        subscribers: subscribers,
+        inviteCode: inviteCode,
+        inviteUrl: inviteCode ? `https://whatsapp.com/channel/${inviteCode}` : null,
+        verification: (metadata as any)?.verification ?? threadMetadata?.verification ?? null,
+        owner: (metadata as any)?.owner ?? threadMetadata?.owner ?? null,
+        creationTime: creationTime,
+        muteState: (metadata as any)?.mute_state ?? viewerMetadata?.mute ?? null,
+        role: viewerMetadata?.role ?? null,
+        picture: (metadata as any)?.picture ?? threadMetadata?.picture ?? null,
+        lastMessageTimestamp: channel.lastMessageTimestamp ?? 0,
+        source: 'baileys',
+        metadata: metadata,
+      };
+    } catch (error) {
+      this.logger.warn(`Failed to fetch newsletter metadata for ${channel.remoteJid}: ${error}`);
+
+      return {
+        id: channel.remoteJid,
+        remoteJid: channel.remoteJid,
+        name: channel.pushName ?? channel.remoteJid,
+        description: null,
+        participants: null,
+        subscribers: null,
+        inviteCode: null,
+        inviteUrl: null,
+        verification: null,
+        owner: null,
+        creationTime: null,
+        muteState: null,
+        role: null,
+        picture: null,
+        lastMessageTimestamp: channel.lastMessageTimestamp ?? 0,
+        source: 'baileys',
+        metadata: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private normalizeNewsletterJid(value?: string | null): string | null {
+    if (!value) return null;
+
+    const normalized = value.trim();
+    if (!normalized) return null;
+    if (isJidNewsletter(normalized)) return normalized;
+
+    if (normalized.includes('@')) {
+      return null;
+    }
+
+    return `${normalized}@newsletter`;
+  }
+
+  private extractChannelSubscribers(metadata: any, subscribersPayload: any): number | null {
+    if (typeof subscribersPayload?.subscribers === 'number') {
+      return subscribersPayload.subscribers;
+    }
+
+    const metadataSubscribers = metadata?.subscribers ?? metadata?.thread_metadata?.subscribers_count;
+    const parsedSubscribers = Number(metadataSubscribers);
+    if (Number.isFinite(parsedSubscribers)) {
+      return parsedSubscribers;
+    }
+
+    return null;
+  }
+
+  private normalizeChannelCreationTime(value: unknown): number | null {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return null;
+    }
+
+    return Math.trunc(parsed);
   }
 }

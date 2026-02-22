@@ -26,6 +26,16 @@ export class WhatsAppNumberDto {
   numbers: string[];
 }
 
+export class FetchChannelsByBaileysDto {
+  page?: number;
+  limit?: number;
+  includeSubscribers?: boolean;
+  where?: {
+    remoteJid?: string;
+  };
+  channelJids?: string[];
+}
+
 export class NumberDto {
   number: string;
 }
