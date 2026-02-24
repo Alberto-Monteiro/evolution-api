@@ -40,6 +40,7 @@ import {
   Options,
   SendAudioDto,
   SendButtonsDto,
+  SendChannelMediaDto,
   SendContactDto,
   SendListDto,
   SendLocationDto,
@@ -1602,6 +1603,22 @@ export class BaileysStartupService extends ChannelStartupService {
       const readChatToUpdate: Record<string, true> = {}; // {remoteJid: true}
 
       for await (const { key, update } of args) {
+        const stubParameters = (update as any)?.messageStubParameters as string[] | undefined;
+        const rejectionCode = stubParameters?.[0];
+        const isRejectedByServer = update?.status === 0;
+
+        if (isRejectedByServer && rejectionCode) {
+          this.logger.warn({
+            action: 'messageUpdateRejected',
+            remoteJid: key?.remoteJid,
+            keyId: key?.id,
+            status: update?.status,
+            rejectionCode,
+            rejectionHint:
+              rejectionCode === '479' ? 'newsletter-media-rejected-by-server (check mediatype/node attrs)' : 'unknown',
+          });
+        }
+
         const keyAny = key as any;
         if (keyAny.remoteJid) {
           keyAny.remoteJid = keyAny.remoteJid.replace(/:.*$/, '');
@@ -2218,6 +2235,7 @@ export class BaileysStartupService extends ChannelStartupService {
     messageId?: string,
     ephemeralExpiration?: number,
     contextInfo?: any,
+    directSend = false,
     // participants?: GroupParticipant[],
   ) {
     sender = sender.toLowerCase();
@@ -2274,6 +2292,33 @@ export class BaileysStartupService extends ChannelStartupService {
 
     if (contextInfo) {
       message['contextInfo'] = contextInfo;
+    }
+
+    if (directSend) {
+      const directMessage = typeof message === 'object' && message !== null ? { ...message } : message;
+
+      if (typeof directMessage === 'object' && directMessage !== null) {
+        if (mentions?.length) {
+          directMessage['mentions'] = mentions;
+        }
+        if (linkPreview === false && typeof directMessage['text'] === 'string') {
+          directMessage['linkPreview'] = false;
+        }
+      }
+
+      this.logger.debug({
+        action: 'directSendMessage',
+        sender,
+        messageKeys: typeof directMessage === 'object' && directMessage !== null ? Object.keys(directMessage) : [],
+        hasQuoted: Boolean(option?.quoted),
+        mentionsCount: mentions?.length ?? 0,
+      });
+
+      return await this.client.sendMessage(
+        sender,
+        directMessage as unknown as AnyMessageContent,
+        option as unknown as MiscMessageGenerationOptions,
+      );
     }
 
     if (message['conversation']) {
@@ -2373,6 +2418,7 @@ export class BaileysStartupService extends ChannelStartupService {
     message: T,
     options?: Options,
     isIntegration = false,
+    directSend = false,
   ) {
     const isWA = (await this.whatsappNumber({ numbers: [number] }))?.shift();
 
@@ -2385,7 +2431,7 @@ export class BaileysStartupService extends ChannelStartupService {
     this.logger.verbose(`Sending message to ${sender}`);
 
     try {
-      if (options?.delay) {
+      if (options?.delay && !isJidNewsletter(sender)) {
         this.logger.verbose(`Typing for ${options.delay}ms to ${sender}`);
         if (options.delay > 20000) {
           let remainingDelay = options.delay;
@@ -2474,6 +2520,8 @@ export class BaileysStartupService extends ChannelStartupService {
           quoted,
           null,
           group?.ephemeralDuration,
+          undefined,
+          directSend,
           // group?.participants,
         );
       } else {
@@ -2497,6 +2545,7 @@ export class BaileysStartupService extends ChannelStartupService {
           null,
           undefined,
           contextInfo,
+          directSend,
         );
       }
 
@@ -3082,6 +3131,63 @@ export class BaileysStartupService extends ChannelStartupService {
     );
 
     return mediaSent;
+  }
+
+  public async channelMediaMessage(data: SendChannelMediaDto, isIntegration = false) {
+    const mediaSource = isURL(data.media) ? 'url' : 'base64';
+    const isNewsletter = data?.number?.includes('@newsletter');
+
+    this.logger.log({
+      action: 'channelMediaMessage',
+      number: data?.number,
+      isNewsletter,
+      mediaSource,
+      mediaLength: data?.media?.length ?? 0,
+      hasText: Boolean(data?.text),
+      textLength: data?.text?.length ?? 0,
+      delay: data?.delay,
+    });
+
+    if (!isNewsletter) {
+      this.logger.warn(`channelMediaMessage called with non-newsletter jid: ${data?.number}`);
+    }
+
+    try {
+      const image = isURL(data.media) ? { url: data.media } : Buffer.from(data.media, 'base64');
+
+      const sent = await this.sendMessageWithTyping(
+        data.number,
+        {
+          image,
+          caption: data?.text,
+        } as unknown as proto.IMessage,
+        {
+          delay: data?.delay,
+          presence: 'composing',
+        },
+        isIntegration,
+        true,
+      );
+
+      this.logger.log({
+        action: 'channelMediaMessage',
+        status: 'sent',
+        number: data?.number,
+        messageId: (sent as any)?.key?.id,
+      });
+
+      return sent;
+    } catch (error) {
+      this.logger.error({
+        action: 'channelMediaMessage',
+        status: 'error',
+        number: data?.number,
+        mediaSource,
+        error: error?.toString?.() ?? error,
+        stack: error?.stack,
+      });
+      throw error;
+    }
   }
 
   public async ptvMessage(data: SendPtvDto, file?: any, isIntegration = false) {

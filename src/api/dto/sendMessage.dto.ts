@@ -83,6 +83,12 @@ export class SendMediaDto extends Metadata {
   media: string;
 }
 
+export class SendChannelMediaDto extends Metadata {
+  // url or base64
+  media: string;
+  text?: string;
+}
+
 export class SendPtvDto extends Metadata {
   video: string;
 }
