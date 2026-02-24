@@ -85,5 +85,6 @@ const getMessageContent = (types: any) => {
 export const getConversationMessage = (msg: any) => {
   const types = getTypeMessage(msg);
   const messageContent = getMessageContent(types);
-  return messageContent;
+
+  return messageContent ?? '';
 };
