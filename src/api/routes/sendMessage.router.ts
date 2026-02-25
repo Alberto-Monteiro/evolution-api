@@ -2,6 +2,7 @@ import { RouterBroker } from '@api/abstract/abstract.router';
 import {
   SendAudioDto,
   SendButtonsDto,
+  SendChannelMediaDto,
   SendContactDto,
   SendListDto,
   SendLocationDto,
@@ -18,6 +19,7 @@ import { sendMessageController } from '@api/server.module';
 import {
   audioMessageSchema,
   buttonsMessageSchema,
+  channelMediaMessageSchema,
   contactMessageSchema,
   listMessageSchema,
   locationMessageSchema,
@@ -69,6 +71,16 @@ export class MessageRouter extends RouterBroker {
           schema: mediaMessageSchema,
           ClassRef: SendMediaDto,
           execute: (instance) => sendMessageController.sendMedia(instance, bodyData, req.file as any),
+        });
+
+        return res.status(HttpStatus.CREATED).json(response);
+      })
+      .post(this.routerPath('sendChannelMedia'), ...guards, async (req, res) => {
+        const response = await this.dataValidate<SendChannelMediaDto>({
+          request: req,
+          schema: channelMediaMessageSchema,
+          ClassRef: SendChannelMediaDto,
+          execute: (instance, data) => sendMessageController.sendChannelMedia(instance, data),
         });
 
         return res.status(HttpStatus.CREATED).json(response);

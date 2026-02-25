@@ -4,6 +4,7 @@ import {
   BlockUserDto,
   DecryptPollVoteDto,
   DeleteMessage,
+  FetchChannelsByBaileysDto,
   getBase64FromMediaMessageDto,
   MarkChatUnreadDto,
   NumberDto,
@@ -300,6 +301,16 @@ export class ChatRouter extends RouterBroker {
           schema: contactValidateSchema,
           ClassRef: Query<Contact>,
           execute: (instance, query) => chatController.fetchChannels(instance, query as any),
+        });
+
+        return res.status(HttpStatus.OK).json(response);
+      })
+      .post(this.routerPath('findChannelsByBaileys'), ...guards, async (req, res) => {
+        const response = await this.dataValidate<FetchChannelsByBaileysDto>({
+          request: req,
+          schema: null,
+          ClassRef: FetchChannelsByBaileysDto,
+          execute: (instance, data) => chatController.fetchChannelsByBaileys(instance, data),
         });
 
         return res.status(HttpStatus.OK).json(response);

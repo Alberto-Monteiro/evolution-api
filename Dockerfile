@@ -13,8 +13,11 @@ COPY ./package*.json ./
 COPY ./tsconfig.json ./
 COPY ./tsup.config.ts ./
 COPY ./patches ./patches
+COPY ./scripts ./scripts
 
 RUN npm ci --silent
+
+RUN node ./scripts/patch-baileys-newsletter-media.js
 
 RUN npx patch-package
 

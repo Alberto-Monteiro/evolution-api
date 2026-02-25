@@ -2,6 +2,7 @@ import { InstanceDto } from '@api/dto/instance.dto';
 import {
   SendAudioDto,
   SendButtonsDto,
+  SendChannelMediaDto,
   SendContactDto,
   SendListDto,
   SendLocationDto,
@@ -15,6 +16,7 @@ import {
   SendTextDto,
 } from '@api/dto/sendMessage.dto';
 import { WAMonitoringService } from '@api/services/monitor.service';
+import { Logger } from '@config/logger.config';
 import { BadRequestException } from '@exceptions';
 import { isBase64, isURL } from 'class-validator';
 import emojiRegex from 'emoji-regex';
@@ -30,6 +32,20 @@ function isEmoji(str: string) {
 
 export class SendMessageController {
   constructor(private readonly waMonitor: WAMonitoringService) {}
+  private readonly logger = new Logger('SendMessageController');
+
+  private normalizeBase64Media(media?: string): string {
+    if (typeof media !== 'string') {
+      return '';
+    }
+
+    const dataUriMatch = media.match(/^data:[^;]+;base64,(.*)$/);
+    if (dataUriMatch?.[1]) {
+      return dataUriMatch[1];
+    }
+
+    return media;
+  }
 
   public async sendTemplate({ instanceName }: InstanceDto, data: SendTemplateDto) {
     return await this.waMonitor.waInstances[instanceName].templateMessage(data);
@@ -40,14 +56,91 @@ export class SendMessageController {
   }
 
   public async sendMedia({ instanceName }: InstanceDto, data: SendMediaDto, file?: any) {
+    const instance = this.waMonitor.waInstances[instanceName];
+    const isNewsletter = data?.number?.includes('@newsletter');
+
+    if (isNewsletter && data?.mediatype === 'image' && typeof instance.channelMediaMessage === 'function') {
+      const normalizedMedia = file ? file.buffer.toString('base64') : this.normalizeBase64Media(data?.media);
+      const isMediaUrl = isURL(normalizedMedia);
+      const isMediaBase64 = isBase64(normalizedMedia);
+
+      if (!isMediaUrl && !isMediaBase64) {
+        throw new BadRequestException('Owned media must be a url or base64');
+      }
+
+      return await instance.channelMediaMessage({
+        number: data.number,
+        media: normalizedMedia,
+        text: data?.caption,
+        delay: data?.delay,
+        quoted: data?.quoted,
+        mentionsEveryOne: data?.mentionsEveryOne,
+        mentioned: data?.mentioned,
+        encoding: data?.encoding,
+        messageId: data?.messageId,
+      });
+    }
+
     if (isBase64(data?.media) && !data?.fileName && data?.mediatype === 'document') {
       throw new BadRequestException('For base64 the file name must be informed.');
     }
 
     if (file || isURL(data?.media) || isBase64(data?.media)) {
-      return await this.waMonitor.waInstances[instanceName].mediaMessage(data, file);
+      return await instance.mediaMessage(data, file);
     }
     throw new BadRequestException('Owned media must be a url or base64');
+  }
+
+  public async sendChannelMedia({ instanceName }: InstanceDto, data: SendChannelMediaDto) {
+    const normalizedMedia = this.normalizeBase64Media(data?.media);
+    const isMediaUrl = isURL(normalizedMedia);
+    const isMediaBase64 = isBase64(normalizedMedia);
+
+    this.logger.log({
+      action: 'sendChannelMedia',
+      instanceName,
+      number: data?.number,
+      isNewsletter: data?.number?.includes('@newsletter'),
+      mediaType: isMediaUrl ? 'url' : isMediaBase64 ? 'base64' : 'invalid',
+      mediaLength: normalizedMedia?.length ?? 0,
+      hasText: Boolean(data?.text),
+      textLength: data?.text?.length ?? 0,
+      delay: data?.delay,
+    });
+
+    if (!isMediaUrl && !isMediaBase64) {
+      throw new BadRequestException('Owned media must be a url or base64');
+    }
+
+    const instance = this.waMonitor.waInstances[instanceName];
+    const payload: SendChannelMediaDto = { ...data, media: normalizedMedia };
+
+    if (typeof instance.channelMediaMessage === 'function') {
+      this.logger.log({
+        action: 'sendChannelMedia',
+        instanceName,
+        path: 'channelMediaMessage',
+      });
+      return await instance.channelMediaMessage(payload);
+    }
+
+    this.logger.warn({
+      action: 'sendChannelMedia',
+      instanceName,
+      path: 'fallback-mediaMessage',
+    });
+
+    return await instance.mediaMessage({
+      number: payload.number,
+      mediatype: 'image',
+      media: payload.media,
+      caption: payload.text,
+      delay: payload.delay,
+      quoted: payload.quoted,
+      mentionsEveryOne: payload.mentionsEveryOne,
+      mentioned: payload.mentioned,
+      encoding: payload.encoding,
+    });
   }
 
   public async sendPtv({ instanceName }: InstanceDto, data: SendPtvDto, file?: any) {
